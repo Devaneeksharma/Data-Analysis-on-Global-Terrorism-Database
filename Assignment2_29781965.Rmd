@@ -1,0 +1,470 @@
+---
+title: "Assignement2_29781965"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.width=15, fig.height=9,echo = TRUE)
+```
+
+
+
+```{r}
+library("mongolite")
+library(ggplot2)
+library(dplyr)
+library(psych)
+library(gridExtra)
+library(maps)
+library(reshape2)
+library(clusterGeneration)
+library(caret)
+
+```
+
+
+
+```{r}
+
+# Creating the mongo db connection for the collection GTD_1970_2017
+dbConn=mongo(db="Assignment2",collection = "GTD_2007_2017","mongodb://admin:admin@localhost")
+
+# Creating the mongo db connection for the collection WorldPop
+dbConn1 =mongo(db="Assignment2",collection ="PopulationData","mongodb://admin:admin@localhost")
+
+# getting all the data from the GTD
+alldata_terror<-dbConn$find('{}');
+
+
+# get all the population data
+alldata_pop<- dbConn1$find('{}');
+
+```
+
+
+```{r}
+
+print("summary for Terrorist dataset")
+summary(alldata_terror)
+print("Summary for population dataset")
+summary(alldata_pop)
+
+```
+
+
+```{r}
+#changing the column name in the pupulation dataset so that merge could be apply
+colnames(alldata_pop)[colnames(alldata_pop) == 'Location'] <- 'country_txt'
+colnames(alldata_pop)[colnames(alldata_pop) == 'Time'] <- 'iyear'
+
+#filtering the dataframe from 2007-2017
+alldata_pop_fil<- filter( alldata_pop,iyear>='2007'&iyear<='2050')
+
+
+# merging the population and GTD to be used for time series forcasting on the basis of location.
+terror_pop_df<- merge(alldata_terror,alldata_pop, by =c("iyear","country_txt"))
+summary(terror_pop_df)
+```
+
+
+
+```{r}
+
+#getting the relevent column name form GTD
+myvars <- c("eventid", "iyear", "imonth","iday","country_txt","country","region","specificity","extended","vicinity","crit1","crit2","crit3","multiple","success","doubtterr","guncertain1","suicide","claimed","compclaim","property","propextent"
+,"ishostkid","nkill","nwound","region_txt","attacktype1","attacktype1_txt","targtype1","targtype1_txt","targsubtype1","targsubtype1_txt","natlty1","natlty1_txt","weaptype1","weaptype1_txt","weapsubtype1_txt","weapsubtype1","summary","city", "latitude","ransom", "longitude","hostkidoutcome","hostkidoutcome_txt","INT_IDEO","INT_MISC","INT_ANY","nperps","nperpcap","propextent_txt","gname");
+
+
+# changing the columns to the numeric values
+terror_filter_data <- alldata_terror[,myvars]
+terror_filter_data$nkill <- as.numeric(as.character(terror_filter_data$nkill))
+terror_filter_data$nwound <- as.numeric(as.character(terror_filter_data$nwound))
+terror_filter_data$compclaim <- as.numeric(as.character(terror_filter_data$compclaim))
+terror_filter_data$guncertain1 <- as.numeric(as.character(terror_filter_data$guncertain1))
+terror_filter_data$multiple<- as.numeric(as.character(terror_filter_data$multiple))
+terror_filter_data$natlty1<-as.numeric(as.character(terror_filter_data$natlty1))
+terror_filter_data$weapsubtype1<-as.numeric(as.character(terror_filter_data$weapsubtype1))
+terror_filter_data$nperps<-as.numeric(as.character(terror_filter_data$nperps))
+terror_filter_data$nperpcap<-as.numeric(as.character(terror_filter_data$nperpcap))
+terror_filter_data$ishostkid<-as.numeric(as.character(terror_filter_data$ishostkid))
+terror_filter_data$specificity<-as.numeric(as.character(terror_filter_data$specificity))
+terror_filter_data$doubtterr<-as.numeric(as.character(terror_filter_data$doubtterr))
+terror_filter_data$targsubtype1<as.numeric(as.character(terror_filter_data$targsubtype1))
+terror_filter_data$ishostkid<-as.numeric(as.character(terror_filter_data$ishostkid))
+terror_filter_data$propextent<-as.numeric(as.character(terror_filter_data$propextent))
+terror_filter_data$ransom<- as.numeric(as.character(terror_filter_data$ransom))
+terror_filter_data$hostkidoutcome<-as.numeric(as.character(terror_filter_data$hostkidoutcome))
+terror_filter_data$targsubtype1<-as.numeric(as.character(terror_filter_data$targsubtype1))
+
+#Factoring the not required columns and which are be used later in time series foracsting
+factor_col_factor <- c("country_txt", "region_txt","attacktype1_txt", "targtype1_txt", "targsubtype1_txt",
+"natlty1_txt", "weaptype1_txt", "weapsubtype1_txt", "propextent_txt", "hostkidoutcome_txt")
+terror_filter_data[factor_col_factor ]<- lapply(terror_filter_data[factor_col_factor] , factor)
+All_data<-terror_filter_data
+
+
+
+```
+
+
+```{r}
+#Finding all the non-numeric columns in the terrorrist databse
+numeric_col <- sapply(terror_filter_data, is.numeric)
+non_numeric_Col<- terror_filter_data[,!numeric_col]
+non_numeric_Col
+
+```
+```{r}
+# here the imputation of all the na for GTD values is been done.
+library(ipred)
+# checking for the numeric values
+nums_forimputation <- sapply(terror_filter_data, is.numeric)
+# using cared bagimpute for imputation
+numeric_df_imputed <- preProcess(terror_filter_data[,nums_forimputation], method=c("bagImpute"))
+# predicting the na value.
+Imputed_df <-  predict(numeric_df_imputed, terror_filter_data)
+
+#final_df <- na.omit(Imputed_df)
+sum(is.na(Imputed_df))
+
+```
+
+
+```{r}
+# getting the gname from the terror data frame
+Imputed_df$gname <- as.character(terror_filter_data$gname)
+
+# finding the top 15 terror group operating int he world
+terror_group <- as.data.frame( Imputed_df %>% group_by(gname))
+terror_group$gname<-as.factor(terror_group$gname)
+# changing the terror group df to data frame
+group_count<- as.data.frame(table(terror_group$gname))
+#group_count <- terror_group %>% summarise(n=count(gname))  
+# sorting it in decesning order
+Top15_TerrorGrp_sort<- group_count[order(-group_count$Freq),]
+#taking top 15 terror groups
+Top15_group= Top15_TerrorGrp_sort[2:20,]
+
+# replace all the other terror groups with other groups label
+Imputed_df$gname <- replace(Imputed_df$gname, !Imputed_df$gname %in% Top15_group$Var1,"Others groups")
+
+```
+
+
+
+```{r}
+
+#converting the gnames to factor
+Imputed_df$gname <- as.factor(Imputed_df$gname)
+
+```
+
+
+```{r}
+#correlation matrix for feature section.
+library(corrplot)
+numeric_columns <- sapply(Imputed_df, is.numeric)
+Feature_columns<- Imputed_df[,numeric_columns]
+correlationMatrix <- cor(Feature_columns)
+corrplot(correlationMatrix)
+
+```
+
+
+```{r}
+highlyCorrelated <- findCorrelation(correlationMatrix,cutoff=0.5,names =TRUE)
+highlyCorrelated
+```
+
+
+```{r}
+Feature_columns$gname= as.factor(Imputed_df$gname)
+sample_features<-Feature_columns[sample(nrow(Feature_columns), 2000),] # feature waas done for 2000 records
+sum(is.na(sample_features))
+sample_features
+```
+
+
+```{r}
+library(Boruta)
+search_boruta <- Boruta(sample_features$gname ~ ., data=sample_features, doTrace=2)
+boruta_signif <- names(search_boruta$finalDecision[search_boruta$finalDecision %in% c("Confirmed", "Tentative")])
+print(boruta_signif)
+
+```
+
+
+```{r}
+plot(search_boruta, colCode = c("green", "yellow", "red", "blue"),cex.axis=.9, las=3, xlab="", main="Important variables")
+```
+
+
+```{r}
+#sapply(Feature_columns, class)
+#Feature_columns
+feature_extracted=c("eventid","iyear","imonth","country","region","specificity","extended","crit3","multiple","doubtterr","guncertain1","claimed","compclaim",      "property","propextent","ishostkid","nkill","nwound","attacktype1","targtype1","targsubtype1","natlty1","weaptype1","weapsubtype1","ransom",         "hostkidoutcome","INT_IDEO","INT_MISC","INT_ANY","nperps","nperpcap","success","gname")
+
+feature_columns_df<-Imputed_df[,feature_extracted]
+Final_df_prediction<- feature_columns_df
+
+Final_df_prediction<-Final_df_prediction[sample(nrow(Final_df_prediction), 5000),]
+Final_df_prediction
+
+```
+
+
+```{r}
+library(caTools)
+sample = sample.split(Final_df_prediction[,1:33], SplitRatio = .75)
+train_df = subset(Final_df_prediction, sample == TRUE)
+test_df  = subset(Final_df_prediction, sample == FALSE)
+x<-train_df[,1:32]
+y<-as.factor(train_df[,33])
+
+```
+
+
+```{r}
+
+sapply(train_df, class)
+
+```
+
+
+```{r}
+#random forest classifier
+library(randomForest)
+
+classifier = randomForest(y ~., data=train_df,ntree=2)
+# prediction for random forest
+pred <- predict(classifier, newdata = test_df)
+# confusion
+confusionMatrix(pred,test_df$gname,dnn = c("Prediction", "Reference"))
+```
+
+
+```{r}
+# comapring the result
+table(pred,test_df$gname)
+```
+
+
+```{r}
+df <- as.data.frame(table(pred,test_df$gname))
+ggplot(data =df, mapping = aes(x =df$Var2, y = df$pred)) +
+geom_tile(aes(fill = df$Freq), colour = "white") +
+geom_text(aes(label = sprintf("%1.0f", df$Freq)), vjust = 1) +
+scale_fill_gradient(low = "grey", high = "orange") +
+theme_bw() + theme(axis.text.x = element_text(angle = 90),legend.position = "none")
+```
+
+
+```{r}
+library(pROC)
+pred<-as.factor(pred)
+roc_obj<-roc(test_df$gname,predictor=factor(pred,ordered = TRUE),levels(as.factor(gname)))
+auc(roc_obj)
+
+```
+
+
+
+```{r}
+library(e1071)
+model<- naiveBayes(y~.,data=train_df, laplace = 0, na.action = na.pass)
+pred <- predict(model, test_df$gname)
+table(pred, test_df$gname)
+confusionMatrix(pred,test_df$gname,dnn = c("Prediction", "Reference"))
+
+
+```
+
+
+```{r}
+library(ggplot2)
+df <- as.data.frame(table(pred,test_df$gname))
+ggplot(data =  df, mapping = aes(x = df$Var2, y = df$pred))+
+geom_tile(aes(fill = df$Freq), colour = "white") +
+geom_text(aes(label = sprintf("%1.0f", df$Freq)), vjust = 1) +
+scale_fill_gradient(low = "grey", high = "orange") +
+theme_bw() + theme(axis.text.x = element_text(angle = 90),legend.position = "none")
+```
+
+
+```{r}
+
+table(pred,test_df$gname)
+```
+
+
+```{r}
+
+library(pROC)
+pred<-as.factor(pred)
+roc_obj<-roc(test_df$gname,predictor=factor(pred,ordered = TRUE),levels(as.factor(gname)))
+auc(roc_obj)
+```
+
+
+```{r}
+library(rpart)
+library(MASS)
+sum(is.na(test_df$gname))
+classifier = rpart(y~.,data=train_df,method ="class")
+pred <- predict(classifier,test_df,type = "class")
+confusionMatrix(pred,test_df$gname,dnn = c("Prediction", "Reference"))
+
+```
+
+
+```{r}
+library(ggplot2)
+df <- as.data.frame(table(pred,test_df$gname))
+ggplot(data =  df, mapping = aes(x = df$Var2, y = df$pred))+
+geom_tile(aes(fill = df$Freq), colour = "white") +
+geom_text(aes(label = sprintf("%1.0f", df$Freq)), vjust = 1) +
+scale_fill_gradient(low = "grey", high = "orange") +
+theme_bw() + theme(axis.text.x = element_text(angle = 90),legend.position = "none")
+```
+
+
+```{r}
+
+
+library(pROC)
+pred<-as.factor(pred)
+roc_obj<-roc(test_df$gname,predictor=factor(pred,ordered = TRUE),levels(as.factor(gname)))
+auc(roc_obj)
+```
+
+
+
+```{r}
+library(ggplot2)
+
+terror_df_ts<- subset(alldata_terror, alldata_terror$iyear>=2007 &&alldata_terror$iyear<=2017)
+population_df_2030<- subset(alldata_pop, alldata_pop$iyear>=2007 &&alldata_pop$iyear<=2030)
+
+terror_pop_df$iyear<-as.numeric(as.character(terror_pop_df$iyear))
+
+pop_terror_1970_2017<-filter(terror_pop_df, terror_pop_df$iyear>=1990 && terror_pop_df$iyear<=2017)
+
+Totalpop_terror <-terror_pop_df%>%group_by(iyear)
+#sample_features<-Totalpop_terror[sample(nrow(Totalpop_terror), 100),]
+#new_df_forcasting <- merge(Totalpop_terror,alldata_pop, by=c("country_txt"))
+
+Totalpop_terror <- dplyr::summarise(Totalpop_terror,terror_attack_count=as.numeric(n()),PopTotal=sum(as.numeric(PopTotal)))
+
+cor.test(Totalpop_terror$PopTotal, Totalpop_terror$terror_attack_count, method="pearson")
+```
+
+
+```{r}
+# scatter plot to check the correlation between the population and terror atack over the time.
+library(ggpubr)
+Totalpop_terror$PopTotal<-as.integer(as.character(Totalpop_terror$PopTotal))
+Totalpop_terror$terror_attack_count<-as.integer(as.character(Totalpop_terror$terror_attack_count))
+#Totalpop_terror<-filter(Totalpop_terror,Totalpop_terror$terror_attack_count<=10000)
+Totalpop_terror<-as.data.frame(lapply(Totalpop_terror, function(x) ifelse(is.na(x), mean(x, na.rm = TRUE), x)))
+
+ggscatter(Totalpop_terror, y ="terror_attack_count", x ="PopTotal", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          ylab = "Terrorism incident Count", xlab = "Population of world.")
+
+
+```
+
+
+```{r}
+
+linear_model <- lm(data=Totalpop_terror, terror_attack_count~PopTotal)
+summary(linear_model)
+
+```
+
+
+```{r}
+
+ggplot(data=Totalpop_terror, aes(x=PopTotal, y=terror_attack_count)) +
+  geom_point() +
+  geom_smooth(method="lm",formula= y ~ x)+
+  scale_y_continuous(limits = c(-100,10000 ))
+
+```
+
+
+```{r}
+ploy_regression <-lm(data=Totalpop_terror, terror_attack_count~PopTotal + I(PopTotal^2) + I(PopTotal^3))
+summary(ploy_regression)
+
+```
+
+
+```{r}
+
+ggplot(Totalpop_terror, aes(x=PopTotal, y=terror_attack_count)) +
+  geom_point() +
+  geom_smooth(method="lm",formula= y ~ x + I(x^2) + I(x^3))
+  scale_y_continuous(limits = c(-500, 10000))
+
+```
+
+
+```{r}
+
+anova(ploy_regression, linear_model, test="F")
+
+```
+
+
+```{r}
+#pridicting the future terrorist attack based on the future population
+ #df_chk<-  merge(ts_data,alldata_pop,by=c("iyear,country_txt"))
+
+Totalpop_terror <- Totalpop_terror %>%
+  arrange(iyear)
+
+Totalpop_terror<- Totalpop_terror
+Totalpop_terror$PopTotal<-as.numeric(as.character(Totalpop_terror$PopTotal))
+model_train <- ts(Totalpop_terror[,2:3], start=2007,end=2017,frequency=1)
+percent_changes <- diff(model_train)/model_train[-nrow(model_train),] * 100
+```
+
+
+```{r}
+library("forecast")
+model1_linear <- tslm(terror_attack_count ~ PopTotal, data=model_train)
+
+model2_ploynomial <- tslm(terror_attack_count ~ PopTotal + I(PopTotal^2) + I(PopTotal^3), data=model_train)
+```
+
+
+```{r}
+
+population_fil<-filter(alldata_pop,alldata_pop$iyear>2017&alldata_pop$iyear<2019)
+
+population_fil_gb_df<- dplyr::summarise(population_fil_gb,PopTotal=sum(as.numeric(PopTotal)))
+#new_df$PopTotal<-as.numeric(as.character(new_df$PopTotal))
+colum=c("iyear","PopTotal")
+df_2030<-population_fil[,colum]
+population_fil_gb_df<- dplyr::summarise(df_2030,PopTotal=sum(as.numeric(PopTotal)))
+df_2030$terror_attack_count<-NULL
+#columss=c("iyear","terror_attack_count","PopTotal")
+df_2030[,"terror_attack_count"]<-NA
+df_2030$PopTotal<-as.numeric(df_2030$PopTotal)
+```
+
+
+```{r}
+
+
+f1 <- forecast(model1_linear, newdata=df_2030,level=c(50,70, 95))
+f3 <- forecast(model2_ploynomial, newdata=df_2030,level=c(50, 70, 95))
+
+plot(f3, ylab = 'Terror attack', xlab = 'Year')
+```
+
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
